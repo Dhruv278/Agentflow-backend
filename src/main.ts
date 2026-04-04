@@ -16,10 +16,18 @@ async function bootstrap() {
 
   app.use(cookieParser());
 
+  const allowedOrigins = (process.env['APP_URL'] ?? 'http://localhost:3000')
+    .split(',')
+    .map((u) => u.trim().replace(/\/+$/, ''));
+
   app.enableCors({
-    origin: (process.env['APP_URL'] ?? 'http://localhost:3000')
-      .split(',')
-      .map((u) => u.trim()),
+    origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(null, false);
+      }
+    },
     credentials: true,
   });
 
