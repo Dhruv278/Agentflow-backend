@@ -38,13 +38,14 @@ export class EmailService implements OnModuleInit {
     const pass = this.configService.get<string>('SMTP_PASS');
 
     if (user && pass) {
+      const port = parseInt(
+        this.configService.get<string>('SMTP_PORT') ?? '587',
+        10,
+      );
       this.transporter = createTransport({
         host: this.configService.get<string>('SMTP_HOST') ?? 'smtp.gmail.com',
-        port: parseInt(
-          this.configService.get<string>('SMTP_PORT') ?? '465',
-          10,
-        ),
-        secure: true,
+        port,
+        secure: port === 465,
         auth: { user, pass },
         connectionTimeout: 10000,
         greetingTimeout: 10000,
