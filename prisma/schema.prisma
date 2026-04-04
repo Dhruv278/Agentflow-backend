@@ -1,0 +1,289 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Plan {
+  FREE
+  PRO
+  BYOK
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  CANCELED
+  PAST_DUE
+  TRIALING
+}
+
+enum PaymentProvider {
+  STRIPE
+  RAZORPAY
+}
+
+enum AgentRole {
+  RESEARCHER
+  WRITER
+  REVIEWER
+  CODER
+  CRITIC
+  CUSTOM
+}
+
+enum AgentRunStatus {
+  QUEUED
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+enum AgentStepStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+enum TokenType {
+  EMAIL_VERIFY
+  PASSWORD_RESET
+}
+
+model User {
+  id               String     @id @default(uuid()) @db.Uuid
+  email            String     @unique
+  name             String
+  passwordHash     String     @map("password_hash")
+  plan             Plan       @default(FREE)
+  status           UserStatus @default(ACTIVE)
+  emailVerified    Boolean    @default(false) @map("email_verified")
+  emailVerifiedAt  DateTime?  @map("email_verified_at")
+  stripeCustomerId   String?    @unique @map("stripe_customer_id")
+  razorpayCustomerId String?    @unique @map("razorpay_customer_id")
+  encryptedOrKey     String?    @map("encrypted_or_key")
+  orKeyAddedAt     DateTime?  @map("or_key_added_at")
+  orKeyLastUsedAt  DateTime?  @map("or_key_last_used_at")
+  createdAt        DateTime   @default(now()) @map("created_at")
+  updatedAt        DateTime   @updatedAt @map("updated_at")
+
+  sessions           Session[]
+  subscriptions      Subscription[]
+  invoices           Invoice[]
+  agentTeams         AgentTeam[]
+  agentRuns          AgentRun[]
+  libraryItems       AgentLibraryItem[] @relation("LibraryItemCreator")
+  verificationTokens VerificationToken[]
+
+  @@map("users")
+}
+
+model Session {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  token     String   @unique
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+model VerificationToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  tokenHash String    @unique @map("token_hash")
+  type      TokenType
+  expiresAt DateTime  @map("expires_at")
+  usedAt    DateTime? @map("used_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([type])
+  @@map("verification_tokens")
+}
+
+model Subscription {
+  id                     String             @id @default(uuid()) @db.Uuid
+  userId                 String             @map("user_id") @db.Uuid
+  provider               PaymentProvider    @default(STRIPE)
+  stripeCustomerId       String?            @map("stripe_customer_id")
+  stripeSubscriptionId   String?            @unique @map("stripe_subscription_id")
+  stripePriceId          String?            @map("stripe_price_id")
+  razorpaySubscriptionId String?            @unique @map("razorpay_subscription_id")
+  razorpayPlanId         String?            @map("razorpay_plan_id")
+  plan                   Plan
+  status                 SubscriptionStatus @default(ACTIVE)
+  currentPeriodEnd       DateTime           @map("current_period_end")
+  cancelAtPeriodEnd      Boolean            @default(false) @map("cancel_at_period_end")
+  createdAt              DateTime           @default(now()) @map("created_at")
+  updatedAt              DateTime           @updatedAt @map("updated_at")
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  invoices Invoice[]
+
+  @@index([userId])
+  @@index([stripeCustomerId])
+  @@map("subscriptions")
+}
+
+model Invoice {
+  id                String          @id @default(uuid()) @db.Uuid
+  userId            String          @map("user_id") @db.Uuid
+  subscriptionId    String          @map("subscription_id") @db.Uuid
+  provider          PaymentProvider @default(STRIPE)
+  stripeInvoiceId   String?         @unique @map("stripe_invoice_id")
+  razorpayPaymentId String?         @unique @map("razorpay_payment_id")
+  amountPaid        Int             @map("amount_paid")
+  currency          String          @default("inr")
+  status            String
+  paidAt            DateTime?       @map("paid_at")
+  createdAt         DateTime        @default(now()) @map("created_at")
+
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subscription Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("invoices")
+}
+
+model AgentTeam {
+  id              String   @id @default(uuid()) @db.Uuid
+  userId          String?  @map("user_id") @db.Uuid
+  name            String
+  description     String?
+  goal            String
+  model           String   @default("mistralai/mistral-small-3.1-24b-instruct")
+  isTemplate      Boolean  @default(false) @map("is_template")
+  isPublic        Boolean  @default(false) @map("is_public")
+  category        String?
+  createdByUserId String?  @map("created_by_user_id") @db.Uuid
+  canvasLayout    Json?    @map("canvas_layout")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  user        User?             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  agents      Agent[]
+  runs        AgentRun[]
+  connections AgentConnection[]
+
+  @@index([userId])
+  @@index([isTemplate])
+  @@index([category])
+  @@map("agent_teams")
+}
+
+model Agent {
+  id             String    @id @default(uuid()) @db.Uuid
+  teamId         String    @map("team_id") @db.Uuid
+  role           AgentRole
+  systemPrompt   String    @map("system_prompt")
+  /// @deprecated Use AgentConnection for execution order
+  order          Int       @default(0)
+  enabled        Boolean   @default(true)
+  libraryItemId  String?   @map("library_item_id") @db.Uuid
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  team            AgentTeam          @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  libraryItem     AgentLibraryItem?  @relation(fields: [libraryItemId], references: [id], onDelete: SetNull)
+  steps           AgentRunStep[]
+  connectionsFrom AgentConnection[]  @relation("ConnectionFrom")
+  connectionsTo   AgentConnection[]  @relation("ConnectionTo")
+
+  @@index([teamId])
+  @@map("agents")
+}
+
+model AgentRun {
+  id              String         @id @default(uuid()) @db.Uuid
+  teamId          String         @map("team_id") @db.Uuid
+  userId          String         @map("user_id") @db.Uuid
+  goal            String
+  model           String
+  status          AgentRunStatus @default(QUEUED)
+  startedAt       DateTime?      @map("started_at")
+  completedAt     DateTime?      @map("completed_at")
+  errorMessage    String?        @map("error_message")
+  totalTokensUsed Int            @default(0) @map("total_tokens_used")
+  createdAt       DateTime       @default(now()) @map("created_at")
+
+  team  AgentTeam      @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user  User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  steps AgentRunStep[]
+
+  @@index([teamId])
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("agent_runs")
+}
+
+model AgentRunStep {
+  id         String          @id @default(uuid()) @db.Uuid
+  runId      String          @map("run_id") @db.Uuid
+  agentId    String          @map("agent_id") @db.Uuid
+  role       AgentRole
+  output     String?
+  tokenCount Int             @default(0) @map("token_count")
+  durationMs Int             @default(0) @map("duration_ms")
+  status     AgentStepStatus @default(PENDING)
+  createdAt  DateTime        @default(now()) @map("created_at")
+
+  run   AgentRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  agent Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@index([runId])
+  @@index([agentId])
+  @@map("agent_run_steps")
+}
+
+model AgentLibraryItem {
+  id              String    @id @default(uuid()) @db.Uuid
+  name            String
+  description     String
+  role            AgentRole
+  systemPrompt    String    @map("system_prompt")
+  category        String
+  isPublic        Boolean   @default(true) @map("is_public")
+  createdByUserId String?   @map("created_by_user_id") @db.Uuid
+  usageCount      Int       @default(0) @map("usage_count")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  createdBy User?  @relation("LibraryItemCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  agents    Agent[]
+
+  @@index([category])
+  @@index([isPublic])
+  @@index([createdByUserId])
+  @@map("agent_library_items")
+}
+
+model AgentConnection {
+  id          String   @id @default(uuid()) @db.Uuid
+  teamId      String   @map("team_id") @db.Uuid
+  fromAgentId String   @map("from_agent_id") @db.Uuid
+  toAgentId   String   @map("to_agent_id") @db.Uuid
+  inputKey    String   @default("output") @map("input_key")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  team      AgentTeam @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  fromAgent Agent     @relation("ConnectionFrom", fields: [fromAgentId], references: [id], onDelete: Cascade)
+  toAgent   Agent     @relation("ConnectionTo", fields: [toAgentId], references: [id], onDelete: Cascade)
+
+  @@index([teamId])
+  @@index([fromAgentId])
+  @@index([toAgentId])
+  @@map("agent_connections")
+}

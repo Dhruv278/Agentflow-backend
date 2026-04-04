@@ -1,0 +1,7 @@
+node_modules
+dist
+coverage
+.env
+*.js.map
+cookies.txt
+cookies*.txt
