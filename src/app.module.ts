@@ -27,6 +27,19 @@ import { JwtAuthGuard } from './common/guards/jwt-auth.guard.js';
           process.env['NODE_ENV'] !== 'production'
             ? { target: 'pino-pretty', options: { colorize: true } }
             : undefined,
+        autoLogging: true,
+        serializers: {
+          req(req: Record<string, unknown>) {
+            return {
+              method: req['method'],
+              url: req['url'],
+              remoteAddress: req['remoteAddress'],
+            };
+          },
+          res(res: Record<string, unknown>) {
+            return { statusCode: res['statusCode'] };
+          },
+        },
         redact: [
           'req.headers.authorization',
           'apiKey',

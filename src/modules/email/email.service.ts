@@ -51,7 +51,25 @@ export class EmailService implements OnModuleInit {
         greetingTimeout: 10000,
         socketTimeout: 15000,
       });
-      this.logger.log('SMTP email transport initialized');
+      this.logger.log(
+        {
+          host: this.configService.get<string>('SMTP_HOST') ?? 'smtp.gmail.com',
+          port,
+          user,
+        },
+        'SMTP transport created — verifying connection...',
+      );
+
+      this.transporter.verify().then(() => {
+        this.logger.log('SMTP connection verified — emails ready');
+      }).catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        const code = (err as Record<string, unknown>)?.['code'] ?? 'UNKNOWN';
+        this.logger.error(
+          { error: msg, code },
+          'SMTP connection FAILED — emails will not work. Check SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS.',
+        );
+      });
     } else {
       this.logger.warn(
         'SMTP_USER / SMTP_PASS not configured — emails will be logged instead of sent',
@@ -149,10 +167,20 @@ export class EmailService implements OnModuleInit {
         'Email sent successfully',
       );
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
+      const errObj = err instanceof Error ? err : new Error(String(err));
+      const code = (err as Record<string, unknown>)?.['code'] ?? 'UNKNOWN';
+      const command = (err as Record<string, unknown>)?.['command'] ?? '';
       this.logger.error(
-        { to: params.to, subject: params.subject, error: message },
-        'Failed to send email via SMTP',
+        {
+          to: params.to,
+          subject: params.subject,
+          error: errObj.message,
+          code,
+          command,
+          host: this.configService.get<string>('SMTP_HOST') ?? 'smtp.gmail.com',
+          port: this.configService.get<string>('SMTP_PORT') ?? '587',
+        },
+        'SMTP email failed',
       );
       throw new InternalServerErrorException(
         'Unable to send email. Please try again later.',
