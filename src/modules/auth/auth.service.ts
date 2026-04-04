@@ -458,34 +458,41 @@ export class AuthService {
 
   // ─── Private: Cookies ───
 
+  private getCookieOptions() {
+    const isSecure =
+      this.configService.get('NODE_ENV') === 'production' ||
+      this.configService.get<string>('APP_URL')?.startsWith('https');
+
+    return {
+      httpOnly: true,
+      secure: isSecure,
+      sameSite: isSecure ? ('none' as const) : ('lax' as const),
+      path: '/',
+    };
+  }
+
   private setCookies(
     res: Response,
     accessToken: string,
     refreshToken: string,
   ): void {
-    const isProduction = this.configService.get('NODE_ENV') === 'production';
-
-    const cookieOptions = {
-      httpOnly: true,
-      secure: isProduction,
-      ...(isProduction ? { sameSite: 'none' as const } : {}),
-      path: '/',
-    };
+    const opts = this.getCookieOptions();
 
     res.cookie('access_token', accessToken, {
-      ...cookieOptions,
+      ...opts,
       maxAge: ACCESS_COOKIE_MAX_AGE,
     });
 
     res.cookie('refresh_token', refreshToken, {
-      ...cookieOptions,
+      ...opts,
       maxAge: REFRESH_COOKIE_MAX_AGE,
     });
   }
 
   private clearCookies(res: Response): void {
-    res.clearCookie('access_token', { path: '/' });
-    res.clearCookie('refresh_token', { path: '/' });
+    const opts = this.getCookieOptions();
+    res.clearCookie('access_token', opts);
+    res.clearCookie('refresh_token', opts);
   }
 
   // ─── Private: Hashing ───
