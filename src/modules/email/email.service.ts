@@ -5,7 +5,6 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { createTransport, type Transporter } from 'nodemailer';
 import {
   verificationEmailHtml,
   verificationEmailText,
@@ -19,60 +18,44 @@ import {
   type WelcomeEmailData,
 } from './email-templates.js';
 
+interface BrevoSendPayload {
+  sender: { name: string; email: string };
+  to: { email: string }[];
+  subject: string;
+  htmlContent: string;
+  textContent: string;
+}
+
 @Injectable()
 export class EmailService implements OnModuleInit {
   private readonly logger = new Logger(EmailService.name);
-  private transporter: Transporter | null = null;
-  private readonly fromEmail: string;
+  private apiKey: string | null = null;
+  private readonly senderEmail: string;
+  private readonly senderName: string;
   private readonly appUrl: string;
 
   constructor(private readonly configService: ConfigService) {
-    this.fromEmail =
-      this.configService.get<string>('SMTP_USER') ?? 'noreply@agentflow.app';
+    this.senderEmail =
+      this.configService.get<string>('BREVO_SENDER_EMAIL') ??
+      this.configService.get<string>('SMTP_USER') ??
+      'noreply@agentflow.app';
+    this.senderName =
+      this.configService.get<string>('BREVO_SENDER_NAME') ?? 'AgentFlow';
     this.appUrl =
       this.configService.get<string>('APP_URL') ?? 'http://localhost:3000';
   }
 
   onModuleInit(): void {
-    const user = this.configService.get<string>('SMTP_USER');
-    const pass = this.configService.get<string>('SMTP_PASS');
+    this.apiKey = this.configService.get<string>('BREVO_API_KEY') ?? null;
 
-    if (user && pass) {
-      const port = parseInt(
-        this.configService.get<string>('SMTP_PORT') ?? '587',
-        10,
-      );
-      this.transporter = createTransport({
-        host: this.configService.get<string>('SMTP_HOST') ?? 'smtp.gmail.com',
-        port,
-        secure: port === 465,
-        auth: { user, pass },
-        connectionTimeout: 10000,
-        greetingTimeout: 10000,
-        socketTimeout: 15000,
-      });
+    if (this.apiKey) {
       this.logger.log(
-        {
-          host: this.configService.get<string>('SMTP_HOST') ?? 'smtp.gmail.com',
-          port,
-          user,
-        },
-        'SMTP transport created — verifying connection...',
+        { sender: this.senderEmail },
+        'Brevo HTTP email API initialized',
       );
-
-      this.transporter.verify().then(() => {
-        this.logger.log('SMTP connection verified — emails ready');
-      }).catch((err: unknown) => {
-        const msg = err instanceof Error ? err.message : String(err);
-        const code = (err as Record<string, unknown>)?.['code'] ?? 'UNKNOWN';
-        this.logger.error(
-          { error: msg, code },
-          'SMTP connection FAILED — emails will not work. Check SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS.',
-        );
-      });
     } else {
       this.logger.warn(
-        'SMTP_USER / SMTP_PASS not configured — emails will be logged instead of sent',
+        'BREVO_API_KEY not configured — emails will be logged instead of sent',
       );
     }
   }
@@ -88,7 +71,6 @@ export class EmailService implements OnModuleInit {
       subject: 'Verify your email — AgentFlow',
       text: verificationEmailText(name, url),
       html: verificationEmailHtml(name, url),
-      actionUrl: url,
     });
   }
 
@@ -103,11 +85,14 @@ export class EmailService implements OnModuleInit {
       subject: 'Reset your password — AgentFlow',
       text: passwordResetEmailText(name, url),
       html: passwordResetEmailHtml(name, url),
-      actionUrl: url,
     });
   }
 
-  async sendWelcomeEmail(to: string, name: string, plan: string): Promise<void> {
+  async sendWelcomeEmail(
+    to: string,
+    name: string,
+    plan: string,
+  ): Promise<void> {
     const data: WelcomeEmailData = {
       name,
       plan,
@@ -119,7 +104,6 @@ export class EmailService implements OnModuleInit {
       subject: 'Your account is ready — AgentFlow',
       text: welcomeEmailText(data),
       html: welcomeEmailHtml(data),
-      actionUrl: data.dashboardUrl,
     });
   }
 
@@ -128,13 +112,11 @@ export class EmailService implements OnModuleInit {
       'APP_URL_PLACEHOLDER',
       this.appUrl,
     );
-    const text = invoiceEmailText(data);
     await this.send({
       to,
       subject: `Payment receipt — AgentFlow ${data.plan}`,
-      text,
+      text: invoiceEmailText(data),
       html,
-      actionUrl: `${this.appUrl}/billing`,
     });
   }
 
@@ -143,44 +125,67 @@ export class EmailService implements OnModuleInit {
     subject: string;
     text: string;
     html: string;
-    actionUrl: string;
   }): Promise<void> {
-    if (!this.transporter) {
+    if (!this.apiKey) {
       this.logger.debug(
-        { to: params.to, subject: params.subject, actionUrl: params.actionUrl },
-        'DEV MODE — email not sent, use this URL',
+        { to: params.to, subject: params.subject },
+        'DEV MODE — email not sent (no BREVO_API_KEY)',
       );
       return;
     }
 
+    const payload: BrevoSendPayload = {
+      sender: { name: this.senderName, email: this.senderEmail },
+      to: [{ email: params.to }],
+      subject: params.subject,
+      htmlContent: params.html,
+      textContent: params.text,
+    };
+
     try {
-      await this.transporter.sendMail({
-        from: `"AgentFlow" <${this.fromEmail}>`,
-        to: params.to,
-        subject: params.subject,
-        text: params.text,
-        html: params.html,
+      const response = await fetch('https://api.brevo.com/v3/smtp/email', {
+        method: 'POST',
+        headers: {
+          'api-key': this.apiKey,
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(10000),
       });
+
+      if (!response.ok) {
+        const body = (await response.json().catch(() => ({}))) as Record<
+          string,
+          unknown
+        >;
+        this.logger.error(
+          {
+            to: params.to,
+            subject: params.subject,
+            status: response.status,
+            error: body['message'] ?? response.statusText,
+            code: body['code'],
+          },
+          'Brevo API error',
+        );
+        throw new InternalServerErrorException(
+          'Unable to send email. Please try again later.',
+        );
+      }
 
       this.logger.log(
         { to: params.to, subject: params.subject },
-        'Email sent successfully',
+        'Email sent successfully via Brevo',
       );
     } catch (err: unknown) {
-      const errObj = err instanceof Error ? err : new Error(String(err));
-      const code = (err as Record<string, unknown>)?.['code'] ?? 'UNKNOWN';
-      const command = (err as Record<string, unknown>)?.['command'] ?? '';
+      if (err instanceof InternalServerErrorException) {
+        throw err;
+      }
+      const message = err instanceof Error ? err.message : String(err);
       this.logger.error(
-        {
-          to: params.to,
-          subject: params.subject,
-          error: errObj.message,
-          code,
-          command,
-          host: this.configService.get<string>('SMTP_HOST') ?? 'smtp.gmail.com',
-          port: this.configService.get<string>('SMTP_PORT') ?? '587',
-        },
-        'SMTP email failed',
+        { to: params.to, subject: params.subject, error: message },
+        'Brevo API call failed',
       );
       throw new InternalServerErrorException(
         'Unable to send email. Please try again later.',
