@@ -119,12 +119,17 @@ export class HttpExceptionFilter implements ExceptionFilter {
   }
 
   private handleUnknownError(exception: unknown, response: Response): void {
-    const err =
-      exception instanceof Error ? exception : new Error(String(exception));
-    this.logger.error(
-      { stack: err.stack, name: err.constructor.name },
-      `Unhandled exception: ${err.message}`,
-    );
+    if (exception instanceof Error) {
+      this.logger.error(
+        { stack: exception.stack, name: exception.constructor.name },
+        `Unhandled exception: ${exception.message}`,
+      );
+    } else {
+      this.logger.error(
+        { raw: JSON.stringify(exception, null, 2) },
+        'Unhandled non-Error exception thrown',
+      );
+    }
     response.status(HttpStatus.INTERNAL_SERVER_ERROR).json({
       statusCode: HttpStatus.INTERNAL_SERVER_ERROR,
       error: 'Internal Server Error',

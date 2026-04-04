@@ -96,34 +96,50 @@ export class RazorpayPaymentProvider implements PaymentProvider, OnModuleInit {
 
   async createCustomer(userId: string, email: string): Promise<string> {
     this.ensureConfigured();
-    const customer = (await this.razorpay.customers.create({
-      email,
-      fail_existing: 0,
-      notes: { userId },
-    })) as unknown as { id: string };
-    return customer.id;
+    try {
+      const customer = (await this.razorpay.customers.create({
+        email,
+        fail_existing: 0,
+        notes: { userId },
+      })) as unknown as { id: string };
+      return customer.id;
+    } catch (err: unknown) {
+      this.logger.error(
+        { error: JSON.stringify(err), userId, email },
+        'Razorpay createCustomer failed',
+      );
+      throw new BadRequestException('Payment provider error. Please try again.');
+    }
   }
 
   async createCheckoutSession(params: CheckoutParams): Promise<CheckoutResult> {
     this.ensureConfigured();
-    const subscription = await this.razorpay.subscriptions.create({
-      plan_id: this.planMap[params.plan],
-      total_count: 12,
-      customer_notify: 1,
-      notes: { userId: params.userId, plan: params.plan },
-      // Razorpay SDK types don't include customer_id but the REST API accepts it
-      ...({ customer_id: params.customerId } as Record<string, string>),
-    });
+    try {
+      const subscription = await this.razorpay.subscriptions.create({
+        plan_id: this.planMap[params.plan],
+        total_count: 12,
+        customer_notify: 1,
+        notes: { userId: params.userId, plan: params.plan },
+        // Razorpay SDK types don't include customer_id but the REST API accepts it
+        ...({ customer_id: params.customerId } as Record<string, string>),
+      });
 
-    return {
-      type: 'modal',
-      subscriptionId: subscription.id,
-      keyId: this.keyId,
-      prefill: {
-        name: params.userName,
-        email: params.email,
-      },
-    };
+      return {
+        type: 'modal',
+        subscriptionId: subscription.id,
+        keyId: this.keyId,
+        prefill: {
+          name: params.userName,
+          email: params.email,
+        },
+      };
+    } catch (err: unknown) {
+      this.logger.error(
+        { error: JSON.stringify(err), plan: params.plan, customerId: params.customerId },
+        'Razorpay createCheckoutSession failed',
+      );
+      throw new BadRequestException('Payment provider error. Please try again.');
+    }
   }
 
   async createPortalSession(
