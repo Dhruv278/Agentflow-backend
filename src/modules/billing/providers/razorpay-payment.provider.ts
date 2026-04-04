@@ -104,6 +104,21 @@ export class RazorpayPaymentProvider implements PaymentProvider, OnModuleInit {
       })) as unknown as { id: string };
       return customer.id;
     } catch (err: unknown) {
+      // Razorpay throws if customer already exists — fetch existing customer
+      const errorBody = err as { statusCode?: number; error?: { description?: string } };
+      if (
+        errorBody?.statusCode === 400 &&
+        errorBody?.error?.description?.includes('Customer already exists')
+      ) {
+        this.logger.log({ email }, 'Razorpay customer already exists, fetching');
+        const customers = (await this.razorpay.customers.all({
+          count: 1,
+        } as Record<string, unknown>)) as unknown as { items: { id: string; email: string }[] };
+        const existing = customers.items?.find(
+          (c) => c.email === email,
+        );
+        if (existing) return existing.id;
+      }
       this.logger.error(
         { error: JSON.stringify(err), userId, email },
         'Razorpay createCustomer failed',
