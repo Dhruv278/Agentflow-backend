@@ -64,5 +64,5 @@ export const TEAM_LIMIT: Record<Plan, number> = {
 
 export const MAX_AGENTS_PER_TEAM = 10;
 
-export const STEP_TIMEOUT_MS = 120_000;
-export const RUN_TIMEOUT_MS = 600_000;
+export const STEP_TIMEOUT_MS = 600_000;
+export const RUN_TIMEOUT_MS = 1_800_000;

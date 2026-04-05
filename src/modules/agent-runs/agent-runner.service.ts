@@ -178,7 +178,7 @@ export class AgentRunnerService {
 
           const timeoutPromise = new Promise<never>((_, reject) => {
             setTimeout(
-              () => reject(new Error('Step timed out after 120 seconds')),
+              () => reject(new Error(`Step timed out after ${STEP_TIMEOUT_MS / 1000} seconds`)),
               STEP_TIMEOUT_MS,
             );
           });
