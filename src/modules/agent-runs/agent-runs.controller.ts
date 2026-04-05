@@ -254,20 +254,20 @@ export class AgentRunsController {
       return;
     }
 
-    // 5. Run is active — replay any steps that already completed before we subscribed
+    // 5. Run is active — replay COMPLETED steps from DB, let RUNNING steps flow via Redis
     const alreadyEmittedStepIds = new Set<string>();
     if (run?.steps) {
       for (const step of run.steps) {
-        alreadyEmittedStepIds.add(step.id);
         res.write(
           `event: step_start\ndata: ${JSON.stringify({ stepId: step.id, role: step.role, agentId: step.agentId })}\n\n`,
         );
-        if (step.output) {
-          res.write(
-            `event: token\ndata: ${JSON.stringify({ stepId: step.id, token: step.output })}\n\n`,
-          );
-        }
         if (step.status === 'COMPLETED') {
+          alreadyEmittedStepIds.add(step.id);
+          if (step.output) {
+            res.write(
+              `event: token\ndata: ${JSON.stringify({ stepId: step.id, token: step.output })}\n\n`,
+            );
+          }
           res.write(
             `event: step_complete\ndata: ${JSON.stringify({ stepId: step.id, role: step.role, tokenCount: step.tokenCount, durationMs: step.durationMs })}\n\n`,
           );
@@ -300,11 +300,6 @@ export class AgentRunsController {
         const stepId = parsed.data?.stepId as string | undefined;
 
         if (stepId && alreadyEmittedStepIds.has(stepId)) {
-          // This step was already replayed from DB — skip to avoid duplicates
-          // Once the step completes via Redis, stop deduplicating it
-          if (parsed.event === 'step_complete') {
-            alreadyEmittedStepIds.delete(stepId);
-          }
           return;
         }
 

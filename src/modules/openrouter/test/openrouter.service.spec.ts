@@ -170,8 +170,8 @@ describe('OpenRouterService', () => {
   });
 
   describe('getMaxTokensForPlan', () => {
-    it('should return 2048 for FREE', () => {
-      expect(service.getMaxTokensForPlan('FREE')).toBe(2048);
+    it('should return 4096 for FREE', () => {
+      expect(service.getMaxTokensForPlan('FREE')).toBe(4096);
     });
 
     it('should return 4096 for PRO', () => {
