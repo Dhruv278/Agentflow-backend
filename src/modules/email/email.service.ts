@@ -5,7 +5,6 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Resend } from 'resend';
 import {
   verificationEmailHtml,
   verificationEmailText,
@@ -19,32 +18,54 @@ import {
   type WelcomeEmailData,
 } from './email-templates.js';
 
+interface BrevoSendPayload {
+  sender: { name: string; email: string };
+  to: { email: string; name?: string }[];
+  subject: string;
+  htmlContent: string;
+  textContent: string;
+}
+
+interface BrevoSuccessResponse {
+  messageId: string;
+}
+
+interface BrevoErrorResponse {
+  code: string;
+  message: string;
+}
+
+const BREVO_API_URL = 'https://api.brevo.com/v3/smtp/email';
+
 @Injectable()
 export class EmailService implements OnModuleInit {
   private readonly logger = new Logger(EmailService.name);
-  private resend: Resend | null = null;
-  private readonly fromEmail: string;
+  private apiKey: string | null = null;
+  private readonly senderName: string;
+  private readonly senderEmail: string;
   private readonly appUrl: string;
 
   constructor(private readonly configService: ConfigService) {
-    this.fromEmail =
-      this.configService.get<string>('RESEND_FROM_EMAIL') ??
-      'onboarding@resend.dev';
+    this.senderName =
+      this.configService.get<string>('BREVO_SENDER_NAME') ?? 'AgentFlow';
+    this.senderEmail =
+      this.configService.get<string>('BREVO_SENDER_EMAIL') ?? '';
     this.appUrl =
       this.configService.get<string>('APP_URL') ?? 'http://localhost:3000';
   }
 
   onModuleInit(): void {
-    const apiKey = this.configService.get<string>('RESEND_API_KEY');
-    if (apiKey) {
-      this.resend = new Resend(apiKey);
+    this.apiKey =
+      this.configService.get<string>('BREVO_API_KEY') ?? null;
+
+    if (this.apiKey) {
       this.logger.log(
-        { from: this.fromEmail },
-        'Resend email client initialized',
+        { from: `${this.senderName} <${this.senderEmail}>` },
+        'Brevo email client initialized',
       );
     } else {
       this.logger.warn(
-        'RESEND_API_KEY not configured — emails will be logged instead of sent',
+        'BREVO_API_KEY not configured — emails will be logged instead of sent',
       );
     }
   }
@@ -115,41 +136,63 @@ export class EmailService implements OnModuleInit {
     text: string;
     html: string;
   }): Promise<void> {
-    if (!this.resend) {
+    if (!this.apiKey) {
       this.logger.debug(
         { to: params.to, subject: params.subject },
-        'DEV MODE — email not sent (no RESEND_API_KEY)',
+        'DEV MODE — email not sent (no BREVO_API_KEY)',
       );
       return;
     }
 
+    const payload: BrevoSendPayload = {
+      sender: { name: this.senderName, email: this.senderEmail },
+      to: [{ email: params.to }],
+      subject: params.subject,
+      htmlContent: params.html,
+      textContent: params.text,
+    };
+
     try {
-      const { data, error } = await this.resend.emails.send({
-        from: `AgentFlow <${this.fromEmail}>`,
-        to: params.to,
-        subject: params.subject,
-        text: params.text,
-        html: params.html,
+      const response = await fetch(BREVO_API_URL, {
+        method: 'POST',
+        headers: {
+          'api-key': this.apiKey,
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify(payload),
       });
 
-      if (error) {
+      if (!response.ok) {
+        const raw = await response.text();
+        let code = 'unknown';
+        let errorMessage = raw;
+        try {
+          const parsed = JSON.parse(raw) as BrevoErrorResponse;
+          code = parsed.code;
+          errorMessage = parsed.message;
+        } catch {
+          /* response was not JSON — raw text is already captured */
+        }
         this.logger.error(
           {
             to: params.to,
             subject: params.subject,
-            error: error.message,
-            name: error.name,
+            status: response.status,
+            code,
+            error: errorMessage,
           },
-          'Resend API error',
+          'Brevo API error',
         );
         throw new InternalServerErrorException(
           'Unable to send email. Please try again later.',
         );
       }
 
+      const result = (await response.json()) as BrevoSuccessResponse;
       this.logger.log(
-        { to: params.to, subject: params.subject, id: data?.id },
-        'Email sent via Resend',
+        { to: params.to, subject: params.subject, messageId: result.messageId },
+        'Email sent via Brevo',
       );
     } catch (err: unknown) {
       if (err instanceof InternalServerErrorException) {
@@ -158,7 +201,7 @@ export class EmailService implements OnModuleInit {
       const message = err instanceof Error ? err.message : String(err);
       this.logger.error(
         { to: params.to, subject: params.subject, error: message },
-        'Resend API call failed',
+        'Brevo API call failed',
       );
       throw new InternalServerErrorException(
         'Unable to send email. Please try again later.',

@@ -10,6 +10,7 @@
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "redis:up": "docker compose -f ../docker-compose.yml up -d",
     "redis:down": "docker compose -f ../docker-compose.yml down",
+    "postinstall": "prisma generate",
     "start": "nest start",
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
@@ -57,7 +58,6 @@
     "pino-http": "^11.0.0",
     "razorpay": "^2.9.6",
     "reflect-metadata": "^0.2.2",
-    "resend": "^6.10.0",
     "rxjs": "^7.8.1",
     "stripe": "^21.0.1"
   },
