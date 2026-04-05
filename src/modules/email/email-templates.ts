@@ -172,7 +172,7 @@ export function welcomeEmailHtml(data: WelcomeEmailData): string {
       <span style="color:#6366f1;font-weight:600;">&#10003;</span>&nbsp; 10 agent runs per month
     </td></tr>
     <tr><td style="padding:6px 0;font-size:13px;color:#4b5563;">
-      <span style="color:#6366f1;font-weight:600;">&#10003;</span>&nbsp; Mistral model access
+      <span style="color:#6366f1;font-weight:600;">&#10003;</span>&nbsp; Gemini Flash, GPT-4o Mini &amp; Mistral
     </td></tr>
     <tr><td style="padding:6px 0;font-size:13px;color:#4b5563;">
       <span style="color:#6366f1;font-weight:600;">&#10003;</span>&nbsp; Agent template library

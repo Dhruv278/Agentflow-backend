@@ -1,7 +1,11 @@
 import type { Plan } from '@prisma/client';
 
 export const MODEL_REGISTRY: Record<Plan, readonly string[]> = {
-  FREE: ['mistralai/mistral-small-3.1-24b-instruct'],
+  FREE: [
+    'google/gemini-2.5-flash',
+    'openai/gpt-4o-mini',
+    'mistralai/mistral-small-3.1-24b-instruct',
+  ],
   PRO: [
     'mistralai/mistral-small-3.1-24b-instruct',
     'openai/gpt-4o',
@@ -27,19 +31,19 @@ export const MODEL_REGISTRY: Record<Plan, readonly string[]> = {
 } as const;
 
 export const DEFAULT_MODEL: Record<Plan, string> = {
-  FREE: 'mistralai/mistral-small-3.1-24b-instruct',
+  FREE: 'google/gemini-2.5-flash',
   PRO: 'openai/gpt-4o-mini',
   BYOK: 'openai/gpt-4o-mini',
 };
 
 export const MAX_TOKENS_PER_STEP: Record<Plan, number> = {
-  FREE: 2048,
+  FREE: 4096,
   PRO: 4096,
   BYOK: 8192,
 };
 
 export const TOKEN_BUDGET_PER_RUN: Record<Plan, number> = {
-  FREE: 10_000,
+  FREE: 30_000,
   PRO: 50_000,
   BYOK: 200_000,
 };

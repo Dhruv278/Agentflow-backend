@@ -170,7 +170,7 @@ export class AgentRunsController {
       return;
     }
 
-    // 2. Check if run already completed (covers race where run finished before subscribe)
+    // 2. Snapshot current run state (covers race where steps ran before subscribe)
     const run = await this.prisma.agentRun.findUnique({
       where: { id },
       select: {
@@ -179,6 +179,18 @@ export class AgentRunsController {
         totalTokensUsed: true,
         startedAt: true,
         completedAt: true,
+        steps: {
+          orderBy: { createdAt: 'asc' },
+          select: {
+            id: true,
+            agentId: true,
+            role: true,
+            output: true,
+            tokenCount: true,
+            durationMs: true,
+            status: true,
+          },
+        },
       },
     });
 
@@ -196,6 +208,20 @@ export class AgentRunsController {
           ? new Date(run.completedAt).getTime() -
             new Date(run.startedAt).getTime()
           : 0;
+      // Replay all steps so the client sees the full output
+      for (const step of run.steps) {
+        res.write(
+          `event: step_start\ndata: ${JSON.stringify({ stepId: step.id, role: step.role, agentId: step.agentId })}\n\n`,
+        );
+        if (step.output) {
+          res.write(
+            `event: token\ndata: ${JSON.stringify({ stepId: step.id, token: step.output })}\n\n`,
+          );
+        }
+        res.write(
+          `event: step_complete\ndata: ${JSON.stringify({ stepId: step.id, role: step.role, tokenCount: step.tokenCount, durationMs: step.durationMs })}\n\n`,
+        );
+      }
       res.write(
         `event: run_complete\ndata: ${JSON.stringify({ runId: id, totalTokens: run.totalTokensUsed, totalDurationMs: elapsed })}\n\n`,
       );
@@ -204,6 +230,22 @@ export class AgentRunsController {
       return;
     }
     if (run?.status === 'FAILED') {
+      // Replay completed steps before the error
+      for (const step of run?.steps ?? []) {
+        res.write(
+          `event: step_start\ndata: ${JSON.stringify({ stepId: step.id, role: step.role, agentId: step.agentId })}\n\n`,
+        );
+        if (step.output) {
+          res.write(
+            `event: token\ndata: ${JSON.stringify({ stepId: step.id, token: step.output })}\n\n`,
+          );
+        }
+        if (step.status === 'COMPLETED') {
+          res.write(
+            `event: step_complete\ndata: ${JSON.stringify({ stepId: step.id, role: step.role, tokenCount: step.tokenCount, durationMs: step.durationMs })}\n\n`,
+          );
+        }
+      }
       res.write(
         `event: run_error\ndata: ${JSON.stringify({ runId: id, error: run.errorMessage ?? 'Run failed' })}\n\n`,
       );
@@ -212,12 +254,33 @@ export class AgentRunsController {
       return;
     }
 
-    // 5. Heartbeat to prevent proxy timeouts
+    // 5. Run is active — replay any steps that already completed before we subscribed
+    const alreadyEmittedStepIds = new Set<string>();
+    if (run?.steps) {
+      for (const step of run.steps) {
+        alreadyEmittedStepIds.add(step.id);
+        res.write(
+          `event: step_start\ndata: ${JSON.stringify({ stepId: step.id, role: step.role, agentId: step.agentId })}\n\n`,
+        );
+        if (step.output) {
+          res.write(
+            `event: token\ndata: ${JSON.stringify({ stepId: step.id, token: step.output })}\n\n`,
+          );
+        }
+        if (step.status === 'COMPLETED') {
+          res.write(
+            `event: step_complete\ndata: ${JSON.stringify({ stepId: step.id, role: step.role, tokenCount: step.tokenCount, durationMs: step.durationMs })}\n\n`,
+          );
+        }
+      }
+    }
+
+    // 6. Heartbeat to prevent proxy timeouts
     heartbeat = setInterval(() => {
       if (!closed) res.write(':ping\n\n');
     }, 15_000);
 
-    // 6. Handle Redis subscriber errors
+    // 7. Handle Redis subscriber errors
     subscriber.on('error', () => {
       if (!closed) {
         cleanup();
@@ -225,11 +288,26 @@ export class AgentRunsController {
       }
     });
 
-    // 7. Forward events to SSE
+    // 8. Forward events to SSE (skip events for steps already replayed from DB)
     subscriber.on('message', (_ch: string, message: string) => {
       if (closed) return;
       try {
-        const parsed = JSON.parse(message) as { event: string; data: unknown };
+        const parsed = JSON.parse(message) as {
+          event: string;
+          data: Record<string, unknown>;
+        };
+
+        const stepId = parsed.data?.stepId as string | undefined;
+
+        if (stepId && alreadyEmittedStepIds.has(stepId)) {
+          // This step was already replayed from DB — skip to avoid duplicates
+          // Once the step completes via Redis, stop deduplicating it
+          if (parsed.event === 'step_complete') {
+            alreadyEmittedStepIds.delete(stepId);
+          }
+          return;
+        }
+
         res.write(
           `event: ${parsed.event}\ndata: ${JSON.stringify(parsed.data)}\n\n`,
         );
