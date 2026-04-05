@@ -148,25 +148,84 @@ export class AgentRunsController {
       throw new ForbiddenException('Not authorized to stream this run');
     }
 
+    // 1. Create subscriber and await subscription BEFORE flushing headers
+    const subscriber = this.redisService.createSubscriber();
+    const channel = `agent-run:${id}`;
+    let closed = false;
+    let heartbeat: ReturnType<typeof setInterval> | null = null;
+
+    const cleanup = () => {
+      if (closed) return;
+      closed = true;
+      if (heartbeat) clearInterval(heartbeat);
+      subscriber.unsubscribe(channel).catch(() => {});
+      subscriber.quit().catch(() => {});
+    };
+
+    try {
+      await subscriber.subscribe(channel);
+    } catch {
+      subscriber.quit().catch(() => {});
+      res.status(503).json({ message: 'Stream temporarily unavailable' });
+      return;
+    }
+
+    // 2. Check if run already completed (covers race where run finished before subscribe)
+    const run = await this.prisma.agentRun.findUnique({
+      where: { id },
+      select: {
+        status: true,
+        errorMessage: true,
+        totalTokensUsed: true,
+        startedAt: true,
+        completedAt: true,
+      },
+    });
+
+    // 3. NOW set headers and flush — subscription is guaranteed active
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
     res.setHeader('X-Accel-Buffering', 'no');
     res.flushHeaders();
 
-    const subscriber = this.redisService.createSubscriber();
-    const channel = `agent-run:${id}`;
-    let closed = false;
+    // 4. If run is already terminal, send final event and close
+    if (run?.status === 'COMPLETED') {
+      const elapsed =
+        run.completedAt && run.startedAt
+          ? new Date(run.completedAt).getTime() -
+            new Date(run.startedAt).getTime()
+          : 0;
+      res.write(
+        `event: run_complete\ndata: ${JSON.stringify({ runId: id, totalTokens: run.totalTokensUsed, totalDurationMs: elapsed })}\n\n`,
+      );
+      cleanup();
+      res.end();
+      return;
+    }
+    if (run?.status === 'FAILED') {
+      res.write(
+        `event: run_error\ndata: ${JSON.stringify({ runId: id, error: run.errorMessage ?? 'Run failed' })}\n\n`,
+      );
+      cleanup();
+      res.end();
+      return;
+    }
 
-    const cleanup = () => {
-      if (closed) return;
-      closed = true;
-      subscriber.unsubscribe(channel).catch(() => {});
-      subscriber.quit().catch(() => {});
-    };
+    // 5. Heartbeat to prevent proxy timeouts
+    heartbeat = setInterval(() => {
+      if (!closed) res.write(':ping\n\n');
+    }, 15_000);
 
-    subscriber.subscribe(channel);
+    // 6. Handle Redis subscriber errors
+    subscriber.on('error', () => {
+      if (!closed) {
+        cleanup();
+        res.end();
+      }
+    });
 
+    // 7. Forward events to SSE
     subscriber.on('message', (_ch: string, message: string) => {
       if (closed) return;
       try {

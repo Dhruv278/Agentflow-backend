@@ -46,8 +46,10 @@ export class AgentRunsService {
   // ─── Agent Teams CRUD ───
 
   async createTeam(userId: string, plan: Plan, dto: CreateAgentTeamDto) {
-    // Check team limit
-    const teamCount = await this.prisma.agentTeam.count({ where: { userId } });
+    // Check team limit (only count non-template teams)
+    const teamCount = await this.prisma.agentTeam.count({
+      where: { userId, isTemplate: false },
+    });
     const limit = TEAM_LIMIT[plan];
     if (teamCount >= limit) {
       throw new ForbiddenException(
@@ -673,6 +675,17 @@ export class AgentRunsService {
   }
 
   async useTemplate(userId: string, templateId: string, plan: Plan) {
+    // Check team limit before creating from template
+    const teamCount = await this.prisma.agentTeam.count({
+      where: { userId, isTemplate: false },
+    });
+    const limit = TEAM_LIMIT[plan];
+    if (teamCount >= limit) {
+      throw new ForbiddenException(
+        `Team limit reached (${teamCount}/${limit}). Upgrade your plan to create more teams.`,
+      );
+    }
+
     const template = await this.prisma.agentTeam.findUnique({
       where: { id: templateId },
       include: {
